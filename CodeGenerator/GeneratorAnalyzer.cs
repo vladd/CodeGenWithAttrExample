@@ -1,11 +1,7 @@
-﻿using System.Collections.Immutable;
-using System.Linq;
-using System.Reflection;
+﻿using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 
 namespace CodeGenerator;
@@ -52,22 +48,30 @@ public class GeneratorAnalyzer : IIncrementalGenerator
             StringBuilder sb = new();
 
             var (ns, className) = modelGroup.Key;
-            if (ns is not null)
-                sb.Append(
-                    $"""
-                    namespace {ns};
-
-                    
-                    """);
-
-            sb.Append(
-                $$"""
-                partial class {{className}}
-                {
-                
-                """);
+            GeneratePreamble(ns, className);
 
             foreach (var model in modelGroup.OrderBy(m => m.PropertyName))
+                GeneratePropertyStringifier(model);
+
+            GeneratePostable();
+
+            var result = sb.ToString();
+            var sourceText = SourceText.From(result, Encoding.UTF8);
+            context.AddSource($"{className}.g.cs", sourceText);
+
+            void GeneratePreamble(string? ns, string className)
+            {
+                if (ns is not null)
+                {
+                    sb.AppendLine($"namespace {ns};");
+                    sb.AppendLine();
+                }
+
+                sb.AppendLine($"partial class {className}");
+                sb.AppendLine("{");
+            }
+
+            void GeneratePropertyStringifier(Model model)
             {
                 var roundArgs = model.OutputType switch
                 {
@@ -76,25 +80,20 @@ public class GeneratorAnalyzer : IIncrementalGenerator
                     _ => null
                 };
                 if (roundArgs is null)
-                    context.ReportDiagnostic(Diagnostic.Create(wrongEnumValue, model.Location?.ToLocation(), model.OutputType));
+                    context.ReportDiagnostic(
+                        Diagnostic.Create(wrongEnumValue, model.Location?.ToLocation(), model.OutputType));
                 else
-                    sb.Append(
+                    sb.AppendLine(
                         $$"""
                             public string Get{{model.PropertyName}}String() =>
                                 decimal.Round({{model.PropertyName}}, {{roundArgs}}).ToString();
-
                         """);
             }
 
-            sb.Append(
-                $$"""
-                }
-
-                """);
-
-            var result = sb.ToString();
-            var sourceText = SourceText.From(result, Encoding.UTF8);
-            context.AddSource($"{className}.g.cs", sourceText);
+            void GeneratePostable()
+            {
+                sb.AppendLine("}");
+            }
         });
     }
 }
