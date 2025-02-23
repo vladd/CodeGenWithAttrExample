@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using System.Drawing;
+using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -18,7 +19,7 @@ public class GeneratorAnalyzer : IIncrementalGenerator
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var pipeline = context.SyntaxProvider.ForAttributeWithMetadataName(
+        var propertyPipeline = context.SyntaxProvider.ForAttributeWithMetadataName(
             fullyQualifiedMetadataName: "Code.StringificationAttribute",
             predicate: static (syntaxNode, cancellationToken) => syntaxNode is PropertyDeclarationSyntax,
             transform: static (context, cancellationToken) =>
@@ -28,7 +29,7 @@ public class GeneratorAnalyzer : IIncrementalGenerator
                 var argument = attribute.ConstructorArguments.Single();
                 var argumentValue = (int)argument.Value!;
 
-                return new Model(
+                return new PropertyModel(
                     Namespace: containingClass.ContainingNamespace?.ToDisplayString(
                         SymbolDisplayFormat.FullyQualifiedFormat.WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted)),
                     ClassName: containingClass.Name,
@@ -38,19 +39,23 @@ public class GeneratorAnalyzer : IIncrementalGenerator
             }
         );
 
-        var groupdByClassPileline = 
-            pipeline
+        var classPileline =
+            propertyPipeline
                 .Collect()
-                .SelectMany((models, ct) => models.GroupBy(m => (m.Namespace, m.ClassName)));
+                .SelectMany((models, ct) =>
+                    models.GroupBy(m => (m.Namespace, m.ClassName))
+                          .Select(g => new ClassModel(g.Key.Namespace,
+                                                      g.Key.ClassName,
+                                                      new(g.OrderBy(m => m.PropertyName)))));
 
-        context.RegisterSourceOutput(groupdByClassPileline, static (context, modelGroup) =>
+        context.RegisterSourceOutput(classPileline, static (context, classModel) =>
         {
             StringBuilder sb = new();
 
-            var (ns, className) = modelGroup.Key;
+            var (ns, className, properties) = classModel;
             GeneratePreamble(ns, className);
 
-            foreach (var model in modelGroup.OrderBy(m => m.PropertyName))
+            foreach (var model in properties)
                 GeneratePropertyStringifier(model);
 
             GeneratePostable();
@@ -71,7 +76,7 @@ public class GeneratorAnalyzer : IIncrementalGenerator
                 sb.AppendLine("{");
             }
 
-            void GeneratePropertyStringifier(Model model)
+            void GeneratePropertyStringifier(PropertyModel model)
             {
                 var roundArgs = model.OutputType switch
                 {
@@ -98,4 +103,5 @@ public class GeneratorAnalyzer : IIncrementalGenerator
     }
 }
 
-public record Model(string? Namespace, string ClassName, string PropertyName, int OutputType, LocationInfo? Location);
+public record PropertyModel(string? Namespace, string ClassName, string PropertyName, int OutputType, LocationInfo? Location);
+public record ClassModel(string? Namespace, string ClassName, EquatableList<PropertyModel> Properties);
